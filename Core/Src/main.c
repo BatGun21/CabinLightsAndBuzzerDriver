@@ -34,7 +34,7 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-#define Clock_Frequency 16000 //KHz
+#define Clock_Frequency 8000 //KHz
 #define GPIO_PORT_LEDS GPIOC
 #define GPIO_PORT_CABINLEDS GPIOB
 #define GPIO_PORT_BUZZER GPIOB
@@ -51,14 +51,14 @@
 #define GPIO_PIN_CAB_LIGHT_FRNT_CTRL GPIO_PIN_3
 #define GPIO_PIN_CAB_LIGHT_REAR_CTRL GPIO_PIN_4
 #define GPIO_PIN_CAB_LIGHT_DICKEY_CTRL GPIO_PIN_5
-#define GPIO_PIN_CAB_DOOR_SW_DICKEY (GPIO_PORT_DICKEYSWITCH->IDR & GPIO_PIN_6)
-#define GPIO_PIN_CAB_DOOR_SW_REAR_L (GPIO_PORT_DOORSWITCHES->IDR & GPIO_PIN_15)
-#define GPIO_PIN_CAB_DOOR_SW_REAR_R (GPIO_PORT_DOORSWITCHES->IDR & GPIO_PIN_8)
-#define GPIO_PIN_CAB_DOOR_SW_FRNT_L (GPIO_PORT_DOORSWITCHES->IDR & GPIO_PIN_5)
-#define GPIO_PIN_CAB_DOOR_SW_FRNT_R (GPIO_PORT_DOORSWITCHES->IDR & GPIO_PIN_4)
-#define GPIO_PIN_MOTORDRIVE_SIGNAL (GPIO_PORT_MOTORDRIVE->IDR & GPIO_PIN_7)
-#define GPIO_PIN_CAB_ON_DOOR_SIGNAL (GPIO_PORT_CAB_ON_DOOR->IDR & GPIO_PIN_8)
-#define KillSwitch_PIN (GPIO_PORT_SWITCH->IDR & GPIO_PIN_0)
+#define GPIO_PIN_CAB_DOOR_SW_DICKEY GPIO_PIN_6
+#define GPIO_PIN_CAB_DOOR_SW_REAR_L GPIO_PIN_15
+#define GPIO_PIN_CAB_DOOR_SW_REAR_R GPIO_PIN_8
+#define GPIO_PIN_CAB_DOOR_SW_FRNT_L GPIO_PIN_5
+#define GPIO_PIN_CAB_DOOR_SW_FRNT_R GPIO_PIN_4
+#define GPIO_PIN_MOTORDRIVE_SIGNAL GPIO_PIN_7
+#define GPIO_PIN_CAB_ON_DOOR_SIGNAL GPIO_PIN_8
+#define KillSwitch_PIN GPIO_PIN_0
 #define ON 1
 #define OFF 0
 /* USER CODE END PD */
@@ -80,17 +80,20 @@ int counter = 0;
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_USART2_UART_Init(void);
+void EXTI_Init(void);
 void SetWaitOneSec(void);
 void DelayMSW(unsigned int time);
 void LED_init(void);
 void SysTick_Init(uint32_t ticks);
 uint16_t debounceSwitch(uint16_t pin);
+int time_expired (int delayTime, int currentTime);
 void FrontLightRelayCTRL(int state);
 void BackLightRelayCTRL(int state);
 void DickeyLightRelayCTRL(int state);
 void BuzzerCTRL(int state);
 void ConfigureOutputPins(void);
 void ConfigureInputPins(void);
+void killSwitch_Handler(void);
 int Check_Front_Door_Switches(void);
 int Check_Rear_Door_Switches(void);
 int Check_Dickey_Door_Switch(void);
@@ -143,28 +146,29 @@ int main(void)
   MX_GPIO_Init();
   MX_USART2_UART_Init();
   /* USER CODE BEGIN 2 */
+  LED_init();
   ConfigureOutputPins();
+  ConfigureInputPins();
+  EXTI_Init();
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-	  if (killSwitchFlagRE){
-		  uint16_t pin = 0;
-		  pin  = debounceSwitch(KillSwitch_PIN);
-		  if (pin!=0){
-			  //Turn of all Relays
-			  FrontLightRelayCTRL(OFF);
-			  BackLightRelayCTRL(OFF);
-			  DickeyLightRelayCTRL(OFF);
-			  BuzzerCTRL(OFF);
-			  while(1){
-				//Halt Operation
-			  }
-		  }
-	  }else{
 
+//	  SetWaitOneSec();
+//	  if (time_expired(OneSec.delayTime, OneSec.currentTime)){
+//		  GPIO_PORT_CABINLEDS->ODR ^= GPIO_PIN_CAB_LIGHT_FRNT_CTRL;
+//		  GPIO_PORT_CABINLEDS->ODR ^= GPIO_PIN_CAB_LIGHT_REAR_CTRL;
+//		  GPIO_PORT_CABINLEDS->ODR ^= GPIO_PIN_CAB_LIGHT_DICKEY_CTRL;
+//		  GPIO_PORT_BUZZER->ODR ^= GPIO_PIN_BUZZER_CTRL;
+//		  OneSec.activeFlag = 0;
+//	  }
+
+	  if (killSwitchFlagRE){
+		  killSwitch_Handler();
+	  }else{
 		  if(Check_Motor_Drive_Signal()){
 			  BuzzerDriver();
 		  }
@@ -189,13 +193,11 @@ int main(void)
 				  DickeyLightRelayCTRL(OFF);
 			  }
 		  }
-
-
 	  }
     /* USER CODE END WHILE */
-
-    /* USER CODE BEGIN 3 */
   }
+    /* USER CODE BEGIN 3 */
+
   /* USER CODE END 3 */
 }
 
@@ -295,6 +297,26 @@ static void MX_GPIO_Init(void)
 
 /* USER CODE BEGIN 4 */
 
+void killSwitch_Handler(void){
+	  uint16_t pin = 0;
+	  pin  = debounceSwitch(GPIO_PORT_SWITCH->IDR & KillSwitch_PIN);
+	  if (pin!=0){
+		  //Turn of all Relays
+		  FrontLightRelayCTRL(OFF);
+		  BackLightRelayCTRL(OFF);
+		  DickeyLightRelayCTRL(OFF);
+		  BuzzerCTRL(OFF);
+		  while(1){
+			//Halt Operation
+			  SetWaitOneSec();
+			  if (time_expired(OneSec.delayTime, OneSec.currentTime)){
+				  GPIO_PORT_LEDS->ODR ^= GPIO_RED_LED_PIN; //Error Blink
+				  OneSec.activeFlag = 0;
+			  }
+		  }
+	  }
+}
+
 void SetWaitOneSec(void){
 	  if (!OneSec.activeFlag){
 		  OneSec.currentTime = counter;
@@ -303,13 +325,10 @@ void SetWaitOneSec(void){
 }
 
 void EXTI0_1_IRQHandler(void) {
-    // Check if the interrupt was triggered by PA0
-    if ((EXTI->PR & EXTI_PR_PR0) == EXTI_PR_PR0) {
-        killSwitchFlagRE = 1;
+    if (EXTI->PR & EXTI_PR_PR0) { // Check if EXTI Line 0 triggered the interrupt
+    	killSwitchFlagRE = 1;
     }
-
-    // Clear the EXTI0 pending flag
-    EXTI->PR |= EXTI_PR_PR0;
+    EXTI->PR = EXTI_PR_PR0; // Clear the interrupt pending bit by writing '1' to it
 }
 
 uint16_t debounceSwitch(uint16_t pin){
@@ -318,10 +337,12 @@ uint16_t debounceSwitch(uint16_t pin){
 	temp = pin;
 	DelayMSW(1);
 	if (pin==temp){
-
 		DelayMSW(1);
 		if (pin==temp){
-		  	currPin = temp;
+			DelayMSW(1);
+			if (pin==temp){
+				currPin = temp;
+			}
 		}
 	}else{
 		currPin = pin;
@@ -330,26 +351,22 @@ uint16_t debounceSwitch(uint16_t pin){
 }
 
 void EXTI_Init(void) {
-    // Enable the GPIOA clock
-    RCC->AHBENR |= RCC_AHBENR_GPIOAEN;
+	  // Enabling Clock for Port A
+	  RCC->AHBENR |= RCC_AHBENR_GPIOAEN;
+	  // Enabling Input for PA0
+	  GPIOA->MODER &= 0xfffffffc;
+	  // Setting the speed of the pin PA0 to High Speed
+	  GPIOA->OSPEEDR |= 0x00000003;
+	  // Enabling Pull Down for PA0
+	  GPIOA->PUPDR |= 0x00000002;
 
-    // Enable SYSCFG clock
-    RCC->APB2ENR |= RCC_APB2ENR_SYSCFGEN;
+	  // Configure EXTI Line 0 for PA0 with a rising edge trigger
+	  EXTI->IMR |= EXTI_IMR_MR0; // Enable interrupt on line 0
+	  EXTI->RTSR |= EXTI_RTSR_TR0; // Trigger on rising edge
 
-    // Configure PA0 as input
-    GPIOA->MODER &= ~GPIO_MODER_MODER0; // Clear bits
-    GPIOA->PUPDR &= ~GPIO_PUPDR_PUPDR0; // No pull-up, no pull-down
-
-    // Connect EXTI0 to PA0
-    SYSCFG->EXTICR[0] &= ~SYSCFG_EXTICR1_EXTI0_Msk;
-
-    // Configure EXTI0 to trigger on rising edge
-    EXTI->IMR |= EXTI_IMR_MR0; // Enable interrupt on EXTI0
-    EXTI->RTSR |= EXTI_RTSR_RT0; // Trigger on rising edge
-
-    // Enable EXTI0_1 interrupt in NVIC
-    NVIC_SetPriority(EXTI0_1_IRQn, 0); // Set priority to 0
-    NVIC_EnableIRQ(EXTI0_1_IRQn);
+	  // Enable EXTI0_1_IRQn (EXTI Line 0 and 1) in the NVIC
+	  NVIC_EnableIRQ(EXTI0_1_IRQn);
+	  NVIC_SetPriority(EXTI0_1_IRQn, 0);
 }
 
 void LED_init(void){
@@ -437,7 +454,7 @@ void BuzzerCTRL(int state){
 }
 
 void BuzzerDriver(void){
-	if ((GPIO_PIN_CAB_DOOR_SW_FRNT_L == 0) || (GPIO_PIN_CAB_DOOR_SW_FRNT_R == 0) || (GPIO_PIN_CAB_DOOR_SW_REAR_L == 0) || (GPIO_PIN_CAB_DOOR_SW_REAR_R == 0) || (GPIO_PIN_CAB_DOOR_SW_DICKEY == 0)){
+	if (Check_Front_Door_Switches()||Check_Rear_Door_Switches()||Check_Dickey_Door_Switch()){
 		BuzzerCTRL(ON);
 	}else{
 		BuzzerCTRL(OFF);
@@ -449,23 +466,23 @@ void ConfigureOutputPins(void){
 	// Enable clock for GPIO Port B and C
     RCC->AHBENR |= RCC_AHBENR_GPIOBEN | RCC_AHBENR_GPIOCEN;
 
-    // Configure pins PC3, PC4, PC15 as push-pull output
-    GPIOC->MODER |= GPIO_MODER_MODER3_0 | GPIO_MODER_MODER4_0 | GPIO_MODER_MODER15_0;
+    // Configure pins PB3, PB4, PB5 output
+    GPIO_PORT_CABINLEDS->MODER |= GPIO_MODER_MODER3_0 | GPIO_MODER_MODER4_0 | GPIO_MODER_MODER5_0;
 
     // Configure pins PC3, PC4, PC15 as high-speed output
-    GPIOC->OSPEEDR |= GPIO_OSPEEDER_OSPEEDR3 | GPIO_OSPEEDER_OSPEEDR4 | GPIO_OSPEEDER_OSPEEDR15;
+    GPIO_PORT_CABINLEDS->OSPEEDR |= GPIO_OSPEEDER_OSPEEDR3 | GPIO_OSPEEDER_OSPEEDR4 | GPIO_OSPEEDER_OSPEEDR5;
 
-    // Set pins PC3, PC4, PC15 as push-pull
-    GPIOC->OTYPER &= ~(GPIO_OTYPER_OT_3 | GPIO_OTYPER_OT_4 | GPIO_OTYPER_OT_15);
+    // Set pins PB3, PB4, PB5 as push-pull
+    GPIO_PORT_CABINLEDS->OTYPER &= ~(GPIO_OTYPER_OT_3 | GPIO_OTYPER_OT_4 | GPIO_OTYPER_OT_5);
 
-    // Configure pin PB1 output
-    GPIOB->MODER |= GPIO_MODER_MODER1_0;
+    // Configure pin PB2 output
+    GPIO_PORT_BUZZER->MODER |= GPIO_MODER_MODER2_0;
 
-    // Configure pin PB1 as high-speed output
-    GPIOB->OSPEEDR |= GPIO_OSPEEDER_OSPEEDR1;
+    // Configure pin PB2 as high-speed output
+    GPIO_PORT_BUZZER->OSPEEDR |= GPIO_OSPEEDER_OSPEEDR2;
 
-    // Set pin PB1 as push-pull
-    GPIOB->OTYPER &= ~GPIO_OTYPER_OT_1;
+    // Set pin PB2 as push-pull
+    GPIO_PORT_BUZZER->OTYPER &= ~GPIO_OTYPER_OT_2;
 }
 
 void ConfigureInputPins(void){
@@ -480,49 +497,61 @@ void ConfigureInputPins(void){
     GPIOB->MODER &= ~GPIO_MODER_MODER6; // Clear bits
     GPIOB->PUPDR |= GPIO_PUPDR_PUPDR6_0; // Set pull-up
 
-    // Configure PB7 and PB8 as digital input with internal pull-down for Motor Drive Input and
+    // Configure PB7 and PB8 as digital input with internal pull-down for Motor Drive Input and Cab_ON_Signal
     GPIOB->MODER &= ~(GPIO_MODER_MODER7 | GPIO_MODER_MODER8); // Clear bits
     GPIOB->PUPDR |= GPIO_PUPDR_PUPDR7_1 | GPIO_PUPDR_PUPDR8_1; // Set pull-down
 }
 
 int Check_Front_Door_Switches(void){
-	int state = 0;
-	if((GPIO_PIN_CAB_DOOR_SW_FRNT_L == 0)||(GPIO_PIN_CAB_DOOR_SW_FRNT_R == 0)){
-		int pin = 1;
-	    pin  = (debounceSwitch(GPIO_PIN_CAB_DOOR_SW_FRNT_L) || debounceSwitch(GPIO_PIN_CAB_DOOR_SW_FRNT_R));
-		if (pin==0){
-			state = 1;
-		}
-	}
-	return state;
+    int state = 0;
+    int frontLeftSwitch = GPIO_PORT_DOORSWITCHES->IDR & GPIO_PIN_CAB_DOOR_SW_FRNT_L;
+    int frontRightSwitch = GPIO_PORT_DOORSWITCHES->IDR & GPIO_PIN_CAB_DOOR_SW_FRNT_R;
+
+    if (frontLeftSwitch == 0 || frontRightSwitch == 0) {
+        int frontLeftDebounced = debounceSwitch(frontLeftSwitch);
+        int frontRightDebounced = debounceSwitch(frontRightSwitch);
+
+        if (frontLeftDebounced == 0 || frontRightDebounced == 0) {
+            state = 1;
+        }
+    }
+
+    return state;
 }
 
 int Check_Rear_Door_Switches(void){
-	int state = 0;
-	if((GPIO_PIN_CAB_DOOR_SW_REAR_L == 0)||(GPIO_PIN_CAB_DOOR_SW_REAR_R == 0)){
-		int pin = 1;
-	    pin  = (debounceSwitch(GPIO_PIN_CAB_DOOR_SW_REAR_L) || debounceSwitch(GPIO_PIN_CAB_DOOR_SW_REAR_R));
-		if (pin==0){
-			state = 1;
-		}
-	}
-	return state;
+    int state = 0;
+    int rearLeftSwitch = GPIO_PORT_DOORSWITCHES->IDR & GPIO_PIN_CAB_DOOR_SW_REAR_L;
+    int rearRightSwitch = GPIO_PORT_DOORSWITCHES->IDR & GPIO_PIN_CAB_DOOR_SW_REAR_R;
+
+    if (rearLeftSwitch == 0 || rearRightSwitch == 0) {
+        int rearLeftDebounced = debounceSwitch(rearLeftSwitch);
+        int rearRightDebounced = debounceSwitch(rearRightSwitch);
+
+        if (rearLeftDebounced == 0 || rearRightDebounced == 0) {
+            state = 1;
+        }
+    }
+
+    return state;
 }
 
 int Check_Dickey_Door_Switch(void){
-	int state = 0;
-	if(GPIO_PIN_CAB_DOOR_SW_DICKEY == 0){
-		int pin = 1;
-	    pin  = debounceSwitch(GPIO_PIN_CAB_DOOR_SW_DICKEY);
-		if (pin==0){
-			state = 1;
-		}
-	}
-	return state;
+    int state = 0;
+    int dickeySwitch = GPIO_PORT_DICKEYSWITCH->IDR & GPIO_PIN_CAB_DOOR_SW_DICKEY;
+
+    if (dickeySwitch == 0) {
+        int dickeyDebounced = debounceSwitch(dickeySwitch);
+        if (dickeyDebounced == 0) {
+            state = 1;
+        }
+    }
+
+    return state;
 }
 
 int Check_Motor_Drive_Signal(void){
-	if ((GPIO_PIN_MOTORDRIVE_SIGNAL != 0)){
+	if (((GPIO_PORT_MOTORDRIVE->IDR & GPIO_PIN_MOTORDRIVE_SIGNAL) != 0)){
 		return 1;
 	}else{
 		return 0;
@@ -530,7 +559,7 @@ int Check_Motor_Drive_Signal(void){
 }
 
 int Check_Cab_On_Door_Signal(void){
-	if ((GPIO_PIN_CAB_ON_DOOR_SIGNAL != 0)){
+	if (((GPIO_PORT_CAB_ON_DOOR->IDR & GPIO_PIN_CAB_ON_DOOR_SIGNAL) != 0)){
 		return 1;
 	}else{
 		return 0;
